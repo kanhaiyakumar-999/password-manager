@@ -1,12 +1,13 @@
+import 'react-native-get-random-values';
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   View, Text, TextInput, ScrollView, Pressable, StyleSheet, StatusBar,
   Alert, Switch, ActivityIndicator, Platform, AppState, SafeAreaView,
   KeyboardAvoidingView
 } from "react-native";
-import * as SecureStore from "expo-secure-store";
-import * as Crypto from "expo-crypto";
-import * as Clipboard from "expo-clipboard";
+import EncryptedStorage from "react-native-encrypted-storage";
+import Clipboard from "@react-native-clipboard/clipboard";
+import { SHA256 } from "crypto-js";
 
 const C = {
   bg: "#0B0B12",
@@ -24,36 +25,20 @@ const VAULT_KEY = "vaultx_entries_v1";
 const HASH_KEY = "vaultx_master_hash_v1";
 const SALT_KEY = "vaultx_master_salt_v1";
 const CHUNK_KEY = "vaultx_chunk_";
-const CHUNK_SIZE = 1500;          // SecureStore values are limited to ~2048 bytes
-const CLIPBOARD_CLEAR_MS = 30000; // wipe copied passwords after 30 seconds
+const CHUNK_SIZE = 1500;
+const CLIPBOARD_CLEAR_MS = 30000;
 const EMPTY_FORM = { title: "", username: "", password: "", website: "", notes: "" };
 
-/* ------------------------- storage layer -------------------------
-   FIX: expo-secure-store does not exist on web, so Snack's web preview
-   broke. On web we fall back to localStorage (NOT secure, demo only).
-   ------------------------------------------------------------------ */
-const store = Platform.OS === "web"
-  ? {
-      get: async k => window.localStorage.getItem(k),
-      set: async (k, v) => window.localStorage.setItem(k, v),
-      del: async k => window.localStorage.removeItem(k),
-    }
-  : {
-      get: k => SecureStore.getItemAsync(k),
-      set: (k, v) => SecureStore.setItemAsync(k, v, {
-        keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY
-      }),
-      del: k => SecureStore.deleteItemAsync(k),
-    };
+const store = {
+  get: k => EncryptedStorage.getItem(k),
+  set: (k, v) => EncryptedStorage.setItem(k, v),
+  del: k => EncryptedStorage.removeItem(k),
+};
 
-/* FIX: the whole vault used to be ONE SecureStore value, which fails once it
-   passes ~2 KB (about 8-10 accounts). Now the vault is split into chunks.
-   JSON is escaped to pure ASCII so 1 character = 1 byte and chunks never
-   cut a multi-byte character in half. */
 async function readVault() {
   const meta = await store.get(VAULT_KEY);
   if (!meta) return [];
-  if (meta.startsWith("[")) return JSON.parse(meta); // vault saved by the old version
+  if (meta.startsWith("[")) return JSON.parse(meta);
   const count = parseInt(meta.split(":")[1], 10);
   let json = "";
   for (let i = 0; i < count; i++) {
@@ -77,30 +62,24 @@ async function writeVault(list) {
     ? parseInt(oldMeta.split(":")[1], 10) : 0;
 
   for (let i = 0; i < parts.length; i++) await store.set(CHUNK_KEY + i, parts[i]);
-  await store.set(VAULT_KEY, "chunks:" + parts.length); // commit only after chunks are written
+  await store.set(VAULT_KEY, "chunks:" + parts.length);
   for (let i = parts.length; i < oldCount; i++) await store.del(CHUNK_KEY + i);
 }
 
-/* ------------------------- small helpers ------------------------- */
-
-// FIX: Alert.alert does nothing on web, so use the browser dialogs there.
 function notify(title, message) {
-  if (Platform.OS === "web") window.alert(`${title}\n${message}`);
-  else Alert.alert(title, message);
+  Alert.alert(title, message);
 }
 
-// FIX: modulo on random bytes favoured some characters. This is unbiased.
 function randomInt(max) {
   const limit = 256 - (256 % max);
   for (;;) {
-    const b = Crypto.getRandomBytes(1)[0];
+    const array = new Uint8Array(1);
+    global.crypto.getRandomValues(array);
+    const b = array[0];
     if (b < limit) return b % max;
   }
 }
 
-/* FIX: the old generator could return a password with none of the selected
-   character types (e.g. symbols ticked but no symbol in the result). Now at
-   least one character of every selected type is guaranteed, then shuffled. */
 function makePassword(length, options) {
   const sets = [];
   if (options.upper) sets.push("ABCDEFGHJKLMNPQRSTUVWXYZ");
@@ -120,10 +99,8 @@ function makePassword(length, options) {
 }
 
 async function hashMaster(password, salt) {
-  return Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.SHA256, salt + password);
+  return SHA256(salt + password).toString();
 }
-
-/* ------------------------- UI parts ------------------------- */
 
 function Button({ title, onPress, secondary, danger, small }) {
   return (
@@ -169,8 +146,6 @@ function Field({ label, value, onChangeText, placeholder, secureTextEntry,
   );
 }
 
-/* ------------------------- app ------------------------- */
-
 export default function App() {
   const [loading, setLoading] = useState(true);
   const [storageError, setStorageError] = useState(false);
@@ -196,9 +171,6 @@ export default function App() {
   const toastTimer = useRef(null);
   const clipTimer = useRef(null);
 
-  /* FIX: if secure storage failed to open, the old code showed "Create your
-     vault", and creating it OVERWROTE the existing vault with []. Now a
-     read error shows a retry screen instead. */
   const init = useCallback(async () => {
     setLoading(true);
     setStorageError(false);
@@ -214,7 +186,6 @@ export default function App() {
 
   useEffect(() => { init(); }, [init]);
 
-  // FIX: lock the vault automatically when the app goes to the background.
   useEffect(() => {
     const sub = AppState.addEventListener("change", state => {
       if (state === "background") lockApp();
@@ -240,18 +211,20 @@ export default function App() {
 
     setBusy(true);
     try {
-      // FIX: never overwrite a vault that already exists.
       if (await store.get(HASH_KEY)) {
         setHasMaster(true);
         notify("Vault exists", "A vault already exists. Enter your master password.");
         return;
       }
-      const salt = Array.from(Crypto.getRandomBytes(16),
-        b => b.toString(16).padStart(2, "0")).join("");
+      
+      const saltArray = new Uint8Array(16);
+      global.crypto.getRandomValues(saltArray);
+      const salt = Array.from(saltArray, b => b.toString(16).padStart(2, "0")).join("");
+      
       const hash = await hashMaster(master, salt);
       await store.set(SALT_KEY, salt);
       await writeVault([]);
-      await store.set(HASH_KEY, hash); // written last: its existence means setup finished
+      await store.set(HASH_KEY, hash);
       setEntries([]);
       setHasMaster(true);
       setUnlocked(true);
@@ -264,7 +237,6 @@ export default function App() {
     }
   }
 
-  // FIX: added a limit on wrong guesses (5 tries, then a 30 second wait).
   async function unlockVault() {
     if (busy) return;
     const wait = lockUntil.current - Date.now();
@@ -286,8 +258,7 @@ export default function App() {
           lockUntil.current = Date.now() + 30000;
           notify("Too many attempts", "Wait 30 seconds before trying again.");
         } else {
-          notify("Access denied",
-            `Incorrect master password. ${5 - fails.current} attempts left.`);
+          notify("Access denied", `Incorrect master password. ${5 - fails.current} attempts left.`);
         }
         return;
       }
@@ -354,26 +325,19 @@ export default function App() {
     const doDelete = async () => {
       if (await persist(entries.filter(e => e.id !== item.id))) setRevealed({});
     };
-    // FIX: Alert with buttons does nothing on web, so the delete never ran.
-    if (Platform.OS === "web") {
-      if (window.confirm(`Remove ${item.title} from your vault?`)) doDelete();
-      return;
-    }
     Alert.alert("Delete credential?", `Remove ${item.title} from your vault?`, [
       { text: "Cancel", style: "cancel" },
       { text: "Delete", style: "destructive", onPress: doDelete }
     ]);
   }
 
-  // FIX: a popup on every copy was annoying (and invisible on web) -> toast.
-  // FIX: copied passwords are wiped from the clipboard after 30 seconds.
-  async function copyText(value, label, isSecret) {
+  function copyText(value, label, isSecret) {
     if (!value) return;
-    await Clipboard.setStringAsync(value);
+    Clipboard.setString(value);
     showToast(`${label} copied` + (isSecret ? " (clears in 30s)" : ""));
     if (isSecret) {
       clearTimeout(clipTimer.current);
-      clipTimer.current = setTimeout(() => Clipboard.setStringAsync(""), CLIPBOARD_CLEAR_MS);
+      clipTimer.current = setTimeout(() => Clipboard.setString(""), CLIPBOARD_CLEAR_MS);
     }
   }
 
@@ -387,7 +351,6 @@ export default function App() {
     setGenerated("");
   }
 
-  // FIX: don't allow switching off the last character type.
   function toggleOpt(key, value) {
     if (!value && Object.values(opts).filter(Boolean).length === 1) return;
     setOpts(p => ({ ...p, [key]: value }));
@@ -397,8 +360,6 @@ export default function App() {
     [e.title, e.username, e.website].join(" ")
       .toLowerCase().includes(search.toLowerCase())
   );
-
-  /* ------------------------- screens ------------------------- */
 
   if (loading) {
     return (
@@ -478,7 +439,6 @@ export default function App() {
           <Text style={styles.muted}>Your personal security vault</Text>
         </View>
         <Pressable onPress={lockApp} style={styles.lockButton}>
-          {/* FIX: the old "♙" glyph is a chess pawn, not a lock */}
           <Text style={{ fontSize: 19 }}>🔒</Text>
         </Pressable>
       </View>
@@ -606,7 +566,6 @@ export default function App() {
             <Field label="Username / email" value={form.username}
               onChangeText={v => setForm(p => ({ ...p, username: v }))}
               placeholder="name@example.com" />
-            {/* FIX: password box had no way to see what was typed or generated */}
             <Field label="Password *" value={form.password}
               onChangeText={v => setForm(p => ({ ...p, password: v }))}
               placeholder="Enter password" secureTextEntry={!showFormPw} />
@@ -671,8 +630,6 @@ export default function App() {
                 <Button title="Copy password" secondary
                   onPress={() => copyText(generated, "Generated password", true)} />
                 <Button title="Use in new account" onPress={() => {
-                  // FIX: this used to keep the title/username/website of the
-                  // last edited account, creating a mixed-up duplicate.
                   setForm({ ...EMPTY_FORM, password: generated });
                   setEditing(null);
                   setShowFormPw(true);
@@ -712,7 +669,6 @@ export default function App() {
 }
 
 const styles = StyleSheet.create({
-  // FIX: SafeAreaView only pads on iOS, so Android gets the status bar height too
   app: { flex: 1, backgroundColor: C.bg, paddingTop: Platform.OS === "android" ? StatusBar.currentHeight || 0 : 0 },
   center: { alignItems: "center", justifyContent: "center", gap: 14 },
   authScreen: { flexGrow: 1, alignItems: "center", justifyContent: "center", padding: 22 },
