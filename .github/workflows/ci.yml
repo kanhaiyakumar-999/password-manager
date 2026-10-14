@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   build:
-    name: Build APK with Expo EAS
+    name: Build Android APK
     runs-on: ubuntu-latest
 
     steps:
@@ -24,14 +24,21 @@ jobs:
         with:
           node-version: 20
 
-      - name: Install dependencies
+      - name: Check project files
+        run: |
+          test -f package.json || (echo "ERROR: package.json not found in repository root" && exit 1)
+          echo "Project files found."
+
+      - name: Install project dependencies
         run: npm install --no-audit --no-fund
 
-      - name: Set up Expo EAS
-        uses: expo/expo-github-action@v8
-        with:
-          eas-version: latest
-          token: ${{ secrets.EXPO_TOKEN }}
+      - name: Install EAS CLI
+        run: npm install --global eas-cli
+
+      - name: Check EAS CLI
+        run: eas --version
 
       - name: Build Android APK
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
         run: eas build --platform android --profile preview --non-interactive --no-wait
