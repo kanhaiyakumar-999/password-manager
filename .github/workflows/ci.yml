@@ -1,44 +1,41 @@
-
-name: Build VAULTX Android APK
+name: Build Android APK
 
 on:
-  workflow_dispatch:
   push:
-    branches:
-      - main
-
-permissions:
-  contents: read
+    branches: [ main ]
+  workflow_dispatch: # This allows you to manually click a "Run" button
 
 jobs:
   build:
-    name: Build Android APK
+    name: Build APK
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
+      - name: Checkout Code
         uses: actions/checkout@v4
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: '18'
 
-      - name: Check project files
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: Install Dependencies
+        run: npm install
+
+      - name: Build Android Debug APK
         run: |
-          test -f package.json || (echo "ERROR: package.json not found in repository root" && exit 1)
-          echo "Project files found."
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleDebug
 
-      - name: Install project dependencies
-        run: npm install --no-audit --no-fund
-
-      - name: Install EAS CLI
-        run: npm install --global eas-cli
-
-      - name: Check EAS CLI
-        run: eas --version
-
-      - name: Build Android APK
-        env:
-          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
-        run: eas build --platform android --profile preview --non-interactive --no-wait
+      - name: Upload APK to GitHub
+        uses: actions/upload-artifact@v4
+        with:
+          name: VaultX-App
+          path: android/app/build/outputs/apk/debug/app-debug.apk
