@@ -1,4 +1,10 @@
 {
-  "name": "VaultX",
-  "displayName": "VaultX"
+  "expo": {
+    "name": "VaultX",
+    "slug": "vaultx",
+    "version": "1.0.0",
+    "android": {
+      "package": "com.vaultx.app"
+    }
+  }
 }
