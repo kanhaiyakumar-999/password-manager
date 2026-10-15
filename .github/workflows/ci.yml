@@ -31,6 +31,11 @@ jobs:
       - name: Generate Android Folder
         run: npx expo prebuild --platform android
 
+      - name: Downgrade Gradle Wrapper
+        run: |
+          cd android
+          sed -i 's|^distributionUrl=.*|distributionUrl=https\\://services.gradle.org/distributions/gradle-8.6-all.zip|' gradle/wrapper/gradle-wrapper.properties
+
       - name: Build Android Debug APK
         run: |
           cd android
