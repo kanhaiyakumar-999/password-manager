@@ -5,9 +5,20 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
+    "icon": "./assets/icon.png",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#f0f0f5"
+    },
+    "assetBundlePatterns": ["**/*"],
     "android": {
       "package": "com.vaultx.app",
       "versionCode": 1,
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#f0f0f5"
+      },
       "permissions": []
     },
     "ios": {
