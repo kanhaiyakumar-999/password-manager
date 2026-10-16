@@ -3,8 +3,16 @@
     "name": "VaultX",
     "slug": "vaultx",
     "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
     "android": {
-      "package": "com.vaultx.app"
+      "package": "com.vaultx.app",
+      "versionCode": 1,
+      "permissions": []
+    },
+    "ios": {
+      "bundleIdentifier": "com.vaultx.app",
+      "supportsTablet": true
     }
   }
 }
